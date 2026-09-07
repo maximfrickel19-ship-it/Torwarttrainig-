@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17324d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Torwarttraining">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Torwarttraining – Termine</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f5f7;color:#18212b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{background:#17324d;color:#fff;padding:18px 16px;position:sticky;top:0;z-index:5}
+h1{font-size:24px;margin:0 0 5px}.sub{margin:0;font-size:14px;opacity:.85}
+nav{display:flex;margin-top:15px;background:#10283d;border-radius:12px;padding:4px}nav button{flex:1;border:0;border-radius:9px;padding:12px;background:transparent;color:#fff;font-weight:700;font-size:16px}nav button.active{background:#fff;color:#17324d}
+main{max-width:900px;margin:auto;padding:14px}.panel{background:#fff;border-radius:16px;padding:15px;margin-bottom:14px;box-shadow:0 2px 10px #00000010}
+.week{display:flex;align-items:center;justify-content:space-between;gap:8px}.week button{width:44px;height:44px;border:0;border-radius:12px;background:#e9eef2;font-size:25px}.week strong{text-align:center}
+.days{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:15px}.day{border:0;background:#eef2f5;border-radius:10px;padding:9px 2px;font-size:12px}.day.active{background:#17324d;color:#fff}
+.slots{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:12px}.slot{min-height:66px;border:0;border-radius:12px;padding:9px;text-align:left;font-size:14px;font-weight:700}.slot.free{background:#e6f7ea}.slot.pending{background:#fff3cc}.slot.accepted{background:#dceeff}.slot.blocked{background:#e8eaec;color:#777}.slot:active{transform:scale(.98)}
+.time{font-size:16px}.hint{font-size:12px;font-weight:500;margin-top:5px;color:#68737d}
+.empty{padding:16px 5px;color:#68737d}.request{border:1px solid #e1e6ea;border-radius:12px;padding:12px;margin:9px 0}.request strong{font-size:16px}.actions{display:flex;gap:8px;margin-top:10px}.actions button{flex:1;border:0;border-radius:9px;padding:10px;font-weight:700}.ok{background:#55bf69;color:#fff}.no{background:#ffe0e0}
+.modal{position:fixed;inset:0;background:#0008;display:flex;align-items:flex-end;justify-content:center;z-index:20}.modal.hide{display:none}.box{background:#fff;width:100%;max-width:520px;border-radius:20px 20px 0 0;padding:20px 18px 28px}.close{float:right;border:0;background:#eef1f3;border-radius:50%;width:34px;height:34px;font-size:22px}
+label{display:block;font-weight:700;margin:15px 0}input,textarea{display:block;width:100%;margin-top:6px;border:1px solid #ccd4dc;border-radius:10px;padding:12px;font:inherit}.send{width:100%;border:0;border-radius:11px;background:#17324d;color:#fff;padding:13px;font-weight:800;font-size:16px}
+.toast{position:fixed;left:14px;right:14px;bottom:15px;background:#17324d;color:#fff;padding:13px;border-radius:12px;text-align:center;z-index:30;display:none}
+@media(min-width:650px){.slots{grid-template-columns:repeat(3,1fr)}.modal{align-items:center}.box{border-radius:18px}}
+</style>
+</head>
+<body>
+<header>
+<h1>🧤 Torwarttraining – Termine</h1><p class="sub">Wähle deinen Wunschtermin für das Torwarttraining</p>
+<nav><button id="playerBtn" class="active">Spieler</button><button id="trainerBtn">Trainer</button></nav>
+</header>
+<main>
+<section class="panel">
+<div class="week"><button id="prev">‹</button><strong id="weekTitle"></strong><button id="next">›</button></div>
+<div id="days" class="days"></div>
+<div id="slots" class="slots"></div>
+</section>
+<section id="notificationsPanel" class="panel" style="display:none"><h2>🔔 Meine Terminmeldungen</h2><div id="notifications"></div></section>
+<section id="trainerPanel" class="panel" style="display:none">
+    <h2>📍 Trainingsort</h2>
+    <label>Ort für den ausgewählten Tag<input id="trainingLocation" placeholder="z. B. Sportplatz Gunzenhausen"></label>
+    <button id="saveLocation" class="send" type="button">Trainingsort speichern</button>
+<h2>Terminanfragen</h2><div id="requests"></div>
+</section>
+</main>
+
+<div id="modal" class="modal hide">
+<div class="box"><button id="close" class="close">×</button><h2>Termin anfragen</h2><div id="chosen"></div>
+<label>Dein Name<input id="name" autocomplete="name" placeholder="Vor- und Nachname"></label><label>Dein Verein<input id="club" autocomplete="organization" placeholder="Name deines Vereins"></label>
+<label>Nachricht (optional)<textarea id="note" rows="3" placeholder="z. B. Aufschlag trainieren"></textarea></label>
+<button id="send" class="send">Anfrage senden</button></div>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+const HOURS=[9,10,11,12,13,14,15,16,17],KEY="trainer-termine-v2";
+let data=JSON.parse(localStorage.getItem(KEY)||'{"requests":[],"blocks":[],"locations":{},"nextId":1}');
+  data.locations=data.locations||{};
+let role="player", trainerUnlocked=false, selectedDate=new Date(), selectedHour=null, mondayDate=getMonday(new Date());
+
+const $=id=>document.getElementById(id);
+function getMonday(d){d=new Date(d);let n=(d.getDay()+6)%7;d.setDate(d.getDate()-n);d.setHours(0,0,0,0);return d}
+function keyDate(d){let y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");return y+"-"+m+"-"+day}
+function save(){localStorage.setItem(KEY,JSON.stringify(data))}
+function fmt(d,opt){return d.toLocaleDateString("de-DE",opt)}
+function block(date,h){return data.blocks.find(x=>x.date===date&&x.hour===h)}
+function req(date,h){return data.requests.filter(x=>x.date===date&&x.hour===h)}
+function toast(t){$("toast").textContent=t;$("toast").style.display="block";setTimeout(()=>$("toast").style.display="none",2200)}
+
+function render(){
+ renderNotifications();
+  $("trainerBtn").textContent=trainerUnlocked?"Trainer ✓":"Trainer";
+ let end=new Date(mondayDate);end.setDate(end.getDate()+6);
+ $("weekTitle").textContent=fmt(mondayDate,{day:"2-digit",month:"2-digit"})+" – "+fmt(end,{day:"2-digit",month:"2-digit",year:"numeric"});
+ renderDays();renderSlots();renderLocation();renderRequests();
+}
+function renderLocation(){
+  let date=keyDate(selectedDate), loc=data.locations[date]||"";
+  if(role==="trainer") $("trainingLocation").value=loc;
+  let existing=$("dayLocation");
+  if(!existing){existing=document.createElement("div");existing.id="dayLocation";existing.style="margin-top:12px;padding:10px 12px;border-radius:10px;background:#eef4f8;font-weight:700";$('days').after(existing)}
+  existing.textContent=loc?"📍 Trainingsort: "+loc:"📍 Trainingsort für diesen Tag noch nicht festgelegt";
+  existing.style.display=role==="player"?"block":"none";
+}
+function saveLocation(){
+  let date=keyDate(selectedDate),loc=$("trainingLocation").value.trim();
+  if(loc)data.locations[date]=loc;else delete data.locations[date];
+  save();render();toast(loc?"Trainingsort für diesen Tag gespeichert.":"Trainingsort entfernt.");
+}
+function renderDays(){
+ let s="";
+ for(let i=0;i<7;i++){let d=new Date(mondayDate);d.setDate(d.getDate()+i);let active=keyDate(d)===keyDate(selectedDate);s+='<button class="day '+(active?"active":"")+'" data-day="'+i+'">'+fmt(d,{weekday:"short",day:"2-digit",month:"2-digit"})+'</button>'}
+ $("days").innerHTML=s;document.querySelectorAll(".day").forEach(b=>b.onclick=()=>{let d=new Date(mondayDate);d.setDate(d.getDate()+Number(b.dataset.day));selectedDate=d;render()})
+}
+function renderSlots(){
+ let date=keyDate(selectedDate),s="";
+ for(let h of HOURS){
+  let b=block(date,h),r=req(date,h),accepted=r.some(x=>x.status==="accepted"),pending=r.some(x=>x.status==="pending");
+  let cls=b?"blocked":accepted?"accepted":pending?"pending":"free";
+  let title=b?"🚫 Vereins-/Trainingszeit":accepted?"✓ Bestätigt":pending?"⏳ Anfrage läuft":"✓ Frei";
+  let hint=role==="player"?(b?"Nicht verfügbar":accepted?"Bereits vergeben":pending?"Anfrage läuft":"Tippen zum Anfragen"):(b?"Tippen zum Freigeben":"Tippen zum Blockieren");
+  s+='<button class="slot '+cls+'" data-hour="'+h+'"><div class="time">'+String(h).padStart(2,"0")+':00 Uhr</div><div>'+title+'</div><div class="hint">'+hint+'</div></button>';
+ }
+ $("slots").innerHTML=s;document.querySelectorAll(".slot").forEach(b=>b.onclick=()=>slotClick(date,Number(b.dataset.hour)))
+}
+function slotClick(date,h){
+ if(role==="trainer"){
+  let b=block(date,h);
+  if(b){data.blocks=data.blocks.filter(x=>!(x.date===date&&x.hour===h));save();toast("Zeit wieder freigegeben.");render();return}
+  if(req(date,h).some(x=>x.status==="accepted")){toast("Dieser Termin ist bereits bestätigt.");return}
+  let reason=prompt("Warum soll die Zeit blockiert werden?","Vereinstraining");
+  if(reason!==null){data.blocks.push({date,hour:h,reason:reason||"Vereinstraining"});save();render()}
+  return;
+ }
+ if(block(date,h)){toast("Diese Zeit ist nicht verfügbar.");return}
+ if(req(date,h).some(x=>x.status==="accepted")){toast("Dieser Termin ist bereits vergeben.");return}
+ selectedHour=h;$("chosen").textContent=fmt(selectedDate,{weekday:"long",day:"2-digit",month:"2-digit",year:"numeric"})+" um "+String(h).padStart(2,"0")+":00 Uhr"+(data.locations[date]?" · 📍 "+data.locations[date]:"");
+ $("modal").classList.remove("hide");setTimeout(()=>$("name").focus(),100);
+}
+function renderNotifications(){
+ if(role!=="player")return;
+ let name=localStorage.getItem("tw_player_name"),club=localStorage.getItem("tw_player_club");
+ let mine=data.requests.filter(x=>x.player===name&&x.club===club&&x.status!=="pending");
+ $("notifications").innerHTML=mine.length?mine.map(x=>{let msg=x.status==="accepted"?"✅ Dein Termin wurde genehmigt.":x.status==="rejected"?"❌ Deine Terminanfrage wurde abgesagt.":"⚠️ Dein Termin wurde vom Trainer storniert.";return '<div class="request"><strong>'+msg+'</strong><br>'+fmt(new Date(x.date+"T12:00:00"),{weekday:"long",day:"2-digit",month:"2-digit",year:"numeric"})+' · '+String(x.hour).padStart(2,"0")+':00 Uhr</div>'}).join(""):"<div class='empty'>Noch keine Terminmeldungen.</div>";
+}
+function renderRequests(){
+ if(role!=="trainer")return;
+ let a=[...data.requests].sort((x,y)=>x.date.localeCompare(y.date)||x.hour-y.hour);
+ $("requests").innerHTML=a.length?a.map(x=>'<div class="request"><strong>'+x.player+'</strong><br>🏟️ Verein: '+(x.club||'Nicht angegeben')+'<br>'+fmt(new Date(x.date+"T12:00:00"),{weekday:"long",day:"2-digit",month:"2-digit",year:"numeric"})+' · '+String(x.hour).padStart(2,"0")+':00 Uhr<br><span>'+ (x.note||"Keine Nachricht")+'</span><br><small>Status: '+x.status+'</small>'+(x.status==="pending"?'<div class="actions"><button class="ok" onclick="setStatus('+x.id+',\'accepted\')">Annehmen</button><button class="no" onclick="setStatus('+x.id+',\'rejected\')">Ablehnen</button></div>':x.status==="accepted"?'<div class="actions"><button class="no" onclick="cancelAppointment('+x.id+')">Termin stornieren</button></div>':"")+'</div>').join(""):"<div class='empty'>Noch keine Anfragen.</div>";
+}
+window.setStatus=(id,status)=>{let x=data.requests.find(r=>r.id===id);if(x){x.status=status;x.updatedAt=Date.now();save();toast(status==="accepted"?"Termin genehmigt – Spieler erhält eine Meldung.":"Termin abgesagt – Spieler erhält eine Meldung.");render()}};
+window.cancelAppointment=(id)=>{let x=data.requests.find(r=>r.id===id);if(!x)return;if(!confirm("Diesen Termin wirklich stornieren?"))return;x.status="cancelled";x.updatedAt=Date.now();save();toast("Termin storniert – Spieler erhält eine Meldung.");render()};
+$("playerBtn").onclick=()=>{role="player";$("trainerPanel").style.display="none";$("notificationsPanel").style.display="block";render()};
+$("trainerBtn").onclick=()=>{
+  if(!trainerUnlocked){
+    let pw=prompt("Trainer-Passwort eingeben:");
+    if(pw!=="flyingkeeperteam"){toast("Falsches Passwort.");return}
+    trainerUnlocked=true;
+  }
+  role="trainer";$("trainerPanel").style.display="block";$("notificationsPanel").style.display="none";render();
+};
+$("prev").onclick=()=>{mondayDate.setDate(mondayDate.getDate()-7);selectedDate=new Date(mondayDate);render()};
+$("next").onclick=()=>{mondayDate.setDate(mondayDate.getDate()+7);selectedDate=new Date(mondayDate);render()};
+$("close").onclick=()=>{$("modal").classList.add("hide")};
+$("saveLocation").onclick=saveLocation;
+$("send").onclick=()=>{
+ let name=$("name").value.trim();let club=$("club").value.trim();if(!name){toast("Bitte deinen Namen eingeben.");return}if(!club){toast("Bitte deinen Verein angeben.");return}
+ localStorage.setItem("tw_player_name",name);localStorage.setItem("tw_player_club",club);
+ data.requests.push({id:data.nextId++,date:keyDate(selectedDate),hour:selectedHour,player:name,club:club,note:$("note").value.trim(),location:data.locations[keyDate(selectedDate)]||"",status:"pending"});save();
+ $("name").value="";$("club").value="";$("note").value="";$("modal").classList.add("hide");render();toast("Anfrage wurde gesendet.");
+};
+render();
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
+}
+</script>
+</body>
+</html>
